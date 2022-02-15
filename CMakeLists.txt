@@ -17,14 +17,27 @@ include(${CMAKE_BINARY_DIR}/conan.cmake)
 conan_cmake_run(REQUIRES
                   ${OPENSSL_VERSION}
                   ${BOOST_VERSION}
-                BASIC_SETUP)
+                BASIC_SETUP
+                BUILD_TYPE ${CMAKE_BUILD_TYPE}
+                BUILD missing)
 
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+conan_basic_setup()
 
 set(APP_SRC "${CMAKE_SOURCE_DIR}/src/main.cpp")
 
 add_executable(sighash ${APP_SRC})
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O3")
+if (MSVC)
+  add_definitions(-D_WIN32_WINNT=0x0601)
+  set(COMPILER_FLAGS "/std:c++17 /Ox")
+elseif (UNIX)
+  set(COMPILER_FLAGS "-std=c++17 -O3")
+else()
+  message(FATAL_ERROR "Not suported platform")
+endif()
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPILER_FLAGS}")
 
 include_directories(
   ${CMAKE_SOURCE_DIR}
@@ -32,4 +45,4 @@ include_directories(
 
 add_subdirectory(src)
 
-target_link_libraries(sighash job_controller ${CONAN_LIBS} -lpthread)
+target_link_libraries(sighash job_controller ${CONAN_LIBS})
