@@ -25,6 +25,7 @@ namespace job
                 {
                     continue;
                 }
+
                 auto new_job = job->MakeJob();
                 auto wrapped_job = [this, job = std::move(new_job)]()
                 {

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/base_job.h"
-
+#include "signature_calculator_job_piece.h"
 
 namespace job
 {
@@ -25,9 +25,9 @@ namespace job
                                const size_t chunk_size_bytes = gkDefaultBlockSize)
             : m_in_file_path(in_file_path)
             , m_out_file_path(out_file_path)
-            // Так максимально загрузим воркеры, хотя по памяти может быть неочень конечно
-            , m_tasks_size_limit_bytes(2 * chunk_size_bytes * (std::thread::hardware_concurrency()))
-            , m_chunk_size_bytes(chunk_size_bytes)
+              // Так максимально загрузим воркеры, хотя по памяти может быть неочень конечно
+              ,
+              m_tasks_size_limit_bytes(2 * chunk_size_bytes * (std::thread::hardware_concurrency())), m_chunk_size_bytes(chunk_size_bytes)
         {
             // За одно полетит исключение если файла нет
             m_file_size_bytes = std::filesystem::file_size(m_in_file_path);
@@ -41,32 +41,22 @@ namespace job
             size_t total_chunks = m_file_size_bytes / m_chunk_size_bytes;
             // Если есть неполный чанк в конце - добавляем
             total_chunks = (m_file_size_bytes % m_chunk_size_bytes > 0) ? total_chunks + 1 : total_chunks;
-            m_results.insert(std::begin(m_results), total_chunks, {});
+            m_context.InitResults(total_chunks);
         }
 
         virtual ~SignatureCalculatorJob() = default;
 
-        virtual std::function<void()> MakeJob() final override
+        virtual std::shared_ptr<BaseJobPiece> MakeJobPiece() final override
         {
-            if (UnfinishedJobsLimitReached())
-            {
-                throw std::runtime_error("Can't produce more tasks. Unfinished tasks size limit reached!");
-            }
-
             std::vector<char> file_chunk;
             ReadFileChunk(file_chunk);
-            m_current_tasks_size_bytes += file_chunk.capacity();
-
-            auto task = [this, file_chunk = std::move(file_chunk), result_idx = m_result_idx]()
-            { ProcessFileChunk(file_chunk, result_idx); };
-            ++m_result_idx;
-
-            return task;
+            m_context.AddTasksSize(file_chunk.capacity());
+            return std::make_shared<SignatureCalculatorJobPiece<DigestType>>(m_context, std::move(file_chunk), m_result_idx++);
         }
 
         virtual bool UnfinishedJobsLimitReached() const final override
         {
-            return m_current_tasks_size_bytes >= m_tasks_size_limit_bytes;
+            return m_context.GetTasksSize() >= m_tasks_size_limit_bytes;
         }
 
         virtual bool HasMoreJob() const override
@@ -79,7 +69,7 @@ namespace job
             try
             {
                 std::ofstream ofs(m_out_file_path);
-                for (const auto &job_result : m_results)
+                for (const auto &job_result : m_context.GetResults())
                 {
                     ofs << job_result << std::endl;
                 }
@@ -94,16 +84,6 @@ namespace job
         }
 
     private:
-        void ProcessFileChunk(const std::vector<char> &file_chunk, const size_t result_idx)
-        {
-            DigestType digest;
-            const auto chunk_size = file_chunk.capacity();
-            digest.update(file_chunk.data(), chunk_size);
-            const auto &res = digest.final();
-            m_results[result_idx] = digest.BytesToHEX(res.data(), res.size(), true);
-            m_current_tasks_size_bytes -= chunk_size;
-        }
-
         void ReadFileChunk(std::vector<char> &read_buf)
         {
             size_t left_to_process = m_file_size_bytes - m_read_bytes;
@@ -114,8 +94,7 @@ namespace job
             m_read_bytes += read_buf.capacity();
         }
 
-        // Сюда кладем результаты работы каждой таки
-        std::vector<std::string> m_results;
+        SignatureCalculatorJobContext m_context;
 
         std::filesystem::path m_in_file_path;
         std::filesystem::path m_out_file_path;
@@ -124,9 +103,8 @@ namespace job
         // Ограничение сверху для размера данных незавершенных задач чтобы не кушать много памяти за зря
         const size_t m_tasks_size_limit_bytes{0};
 
-        // 
         const size_t m_chunk_size_bytes{0};
-        std::atomic<size_t> m_current_tasks_size_bytes{0};
+
         size_t m_read_bytes{0};
         size_t m_result_idx{0};
         size_t m_file_size_bytes{0};
